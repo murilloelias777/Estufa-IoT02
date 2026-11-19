@@ -8,6 +8,7 @@ from werkzeug.security import (
 )
 
 from mysql.connector import Error
+from decimal import Decimal, InvalidOperation
 from getpass import getpass
 
 
@@ -33,6 +34,23 @@ def obter_tabela_usuario(conexao):
     return resultado[0] if resultado else None
 
 
+def obter_tabela_medicao(conexao):
+    cursor = conexao.cursor()
+
+    cursor.execute("""
+        SELECT TABLE_NAME
+        FROM information_schema.tables
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND LOWER(TABLE_NAME) = 'medicao'
+        LIMIT 1
+    """)
+
+    resultado = cursor.fetchone()
+    cursor.close()
+
+    return resultado[0] if resultado else None
+
+
 def obter_status(valor):
     if valor in (1, True, "1", "ativo", "ATIVO"):
         return "ATIVO"
@@ -40,10 +58,10 @@ def obter_status(valor):
     return "INATIVO"
 
 
-def listar_sensores(conexao):
+def listar_sensores(conexao, apenas_ativos=False):
     cursor = conexao.cursor(dictionary=True)
 
-    cursor.execute("""
+    sql = """
         SELECT
             idsensor,
             tipo,
@@ -52,9 +70,14 @@ def listar_sensores(conexao):
             status,
             id_usuario_cadastro
         FROM sensor
-        ORDER BY idsensor ASC
-    """)
+    """
 
+    if apenas_ativos:
+        sql += " WHERE status = 1"
+
+    sql += " ORDER BY idsensor ASC"
+
+    cursor.execute(sql)
     sensores = cursor.fetchall()
     cursor.close()
 
@@ -130,7 +153,7 @@ def cadastrar_usuario():
 
     try:
         cursor.execute(
-            f"SELECT idusuario FROM {tabela} WHERE email = %s",
+            f"SELECT idusuario FROM `{tabela}` WHERE email = %s",
             (email,)
         )
 
@@ -142,7 +165,7 @@ def cadastrar_usuario():
 
         cursor.execute(
             f"""
-            INSERT INTO {tabela} (nome, email, senha)
+            INSERT INTO `{tabela}` (nome, email, senha)
             VALUES (%s, %s, %s)
             """,
             (nome, email, senha_hash)
@@ -189,7 +212,7 @@ def fazer_login():
         cursor.execute(
             f"""
             SELECT idusuario, nome, email, senha
-            FROM {tabela}
+            FROM `{tabela}`
             WHERE email = %s
             """,
             (email,)
@@ -267,7 +290,7 @@ def cadastrar_sensor():
 
 
 # =====================================================
-# EXIBIR DADOS DO SENSOR
+# EXIBIR INFORMAÇÕES DO SENSOR
 # =====================================================
 
 def exibir_sensor(sensor):
@@ -392,7 +415,6 @@ def excluir_sensor(conexao, sensor):
 
     except Error as erro:
         conexao.rollback()
-
         print("\nNão foi possível excluir o sensor.")
         print("Verifique se existem medições vinculadas a ele.")
         print(f"Detalhes: {erro}")
@@ -433,7 +455,7 @@ def consultar_sensores():
                 )
 
             print("-------------------------------------------")
-            print("Digite o ID do sensor para visualizar.")
+            print("Digite o ID para visualizar o sensor.")
             print("0 - Voltar")
 
             try:
@@ -463,8 +485,6 @@ def consultar_sensores():
 
                 if opcao == "1":
                     alterar_sensor(conexao, sensor)
-
-                    # Atualiza os dados exibidos
                     sensor = buscar_sensor(conexao, id_sensor)
 
                     if sensor is None:
@@ -485,6 +505,266 @@ def consultar_sensores():
 
     finally:
         conexao.close()
+
+
+# =====================================================
+# ABA DE MEDIÇÕES
+# =====================================================
+
+def listar_sensores_medicao(conexao, apenas_ativos=False):
+    return listar_sensores(conexao, apenas_ativos)
+
+
+# =====================================================
+# REGISTRAR NOVA MEDIÇÃO
+# =====================================================
+
+def registrar_medicao():
+    if not Sessao.autenticada():
+        print("\nFaça login para registrar medições.")
+        return
+
+    conexao = conectar()
+
+    if conexao is None:
+        return
+
+    tabela = obter_tabela_medicao(conexao)
+
+    if tabela is None:
+        print("\nTabela MEDICAO não encontrada.")
+        conexao.close()
+        return
+
+    try:
+        sensores = listar_sensores_medicao(
+            conexao,
+            apenas_ativos=True
+        )
+
+        if not sensores:
+            print("\nNão existem sensores ativos cadastrados.")
+            return
+
+        print("\n========== SENSORES DISPONÍVEIS ==========")
+
+        for sensor in sensores:
+            print(
+                f"ID: {sensor['idsensor']} | "
+                f"Tipo: {sensor['tipo']} | "
+                f"Unidade: {sensor['unidade_medida']}"
+            )
+
+        try:
+            id_sensor = int(input("\nSelecione o ID do sensor: "))
+        except ValueError:
+            print("\nID inválido.")
+            return
+
+        sensor_selecionado = None
+
+        for sensor in sensores:
+            if sensor["idsensor"] == id_sensor:
+                sensor_selecionado = sensor
+                break
+
+        if sensor_selecionado is None:
+            print("\nSensor não encontrado ou inativo.")
+            return
+
+        print("\n========== NOVA MEDIÇÃO ==========")
+        print(f"Sensor: {sensor_selecionado['tipo']}")
+        print(f"Descrição: {sensor_selecionado['descricao']}")
+        print(f"Unidade: {sensor_selecionado['unidade_medida']}")
+
+        valor_digitado = input(
+            f"Valor medido ({sensor_selecionado['unidade_medida']}): "
+        ).strip().replace(",", ".")
+
+        try:
+            valor = Decimal(valor_digitado)
+        except InvalidOperation:
+            print("\nDigite um valor numérico válido.")
+            return
+
+        if not valor.is_finite():
+            print("\nValor inválido.")
+            return
+
+        if abs(valor) >= Decimal("1000000"):
+            print("\nValor ultrapassa o limite de DECIMAL(8,2).")
+            return
+
+        if valor != valor.quantize(Decimal("0.01")):
+            print("\nInforme no máximo duas casas decimais.")
+            return
+
+        cursor = conexao.cursor()
+
+        cursor.execute(
+            f"""
+            INSERT INTO `{tabela}` (idsensor, data_hora, valor)
+            VALUES (%s, NOW(), %s)
+            """,
+            (id_sensor, valor)
+        )
+
+        conexao.commit()
+
+        print("\nMedição registrada com sucesso!")
+        print(f"ID da medição: {cursor.lastrowid}")
+        print(f"Sensor: {sensor_selecionado['tipo']}")
+        print(
+            f"Valor: {valor} "
+            f"{sensor_selecionado['unidade_medida']}"
+        )
+
+        cursor.close()
+
+    except Error as erro:
+        conexao.rollback()
+        print(f"\nErro ao registrar medição: {erro}")
+
+    finally:
+        conexao.close()
+
+
+# =====================================================
+# CONSULTAR HISTÓRICO DE MEDIÇÕES
+# =====================================================
+
+def consultar_historico():
+    if not Sessao.autenticada():
+        print("\nFaça login para consultar medições.")
+        return
+
+    conexao = conectar()
+
+    if conexao is None:
+        return
+
+    tabela = obter_tabela_medicao(conexao)
+
+    if tabela is None:
+        print("\nTabela MEDICAO não encontrada.")
+        conexao.close()
+        return
+
+    try:
+        sensores = listar_sensores_medicao(conexao)
+
+        if not sensores:
+            print("\nNenhum sensor cadastrado.")
+            return
+
+        print("\n========== SENSORES CADASTRADOS ==========")
+
+        for sensor in sensores:
+            print(
+                f"ID: {sensor['idsensor']} | "
+                f"Tipo: {sensor['tipo']} | "
+                f"Status: {obter_status(sensor['status'])}"
+            )
+
+        try:
+            id_sensor = int(input("\nDigite o ID do sensor: "))
+        except ValueError:
+            print("\nID inválido.")
+            return
+
+        sensor_selecionado = None
+
+        for sensor in sensores:
+            if sensor["idsensor"] == id_sensor:
+                sensor_selecionado = sensor
+                break
+
+        if sensor_selecionado is None:
+            print("\nSensor não encontrado.")
+            return
+
+        cursor = conexao.cursor(dictionary=True)
+
+        cursor.execute(
+            f"""
+            SELECT
+                idmedicao,
+                idsensor,
+                data_hora,
+                valor
+            FROM `{tabela}`
+            WHERE idsensor = %s
+            ORDER BY data_hora DESC, idmedicao DESC
+            LIMIT 100
+            """,
+            (id_sensor,)
+        )
+
+        medicoes = cursor.fetchall()
+        cursor.close()
+
+        print("\n==========================================")
+        print("          HISTÓRICO DE MEDIÇÕES")
+        print("==========================================")
+        print(f"Sensor: {sensor_selecionado['tipo']}")
+        print(f"Descrição: {sensor_selecionado['descricao']}")
+        print(f"Unidade: {sensor_selecionado['unidade_medida']}")
+        print("------------------------------------------")
+
+        if not medicoes:
+            print("\nNenhuma medição registrada para este sensor.")
+            return
+
+        for medicao in medicoes:
+            data_hora = medicao["data_hora"]
+
+            if hasattr(data_hora, "strftime"):
+                data_hora = data_hora.strftime("%d/%m/%Y %H:%M:%S")
+
+            print(f"\nID da medição: {medicao['idmedicao']}")
+            print(f"Data e hora: {data_hora}")
+            print(
+                f"Valor: {medicao['valor']} "
+                f"{sensor_selecionado['unidade_medida']}"
+            )
+            print("------------------------------------------")
+
+        print("\nExibindo as últimas 100 medições.")
+
+    except Error as erro:
+        print(f"\nErro ao consultar histórico: {erro}")
+
+    finally:
+        conexao.close()
+
+
+# =====================================================
+# MENU DE MEDIÇÕES
+# =====================================================
+
+def menu_medicoes():
+    while True:
+        print("\n======================================")
+        print("              MEDIÇÕES")
+        print("======================================")
+        print("1 - Registrar nova medição")
+        print("2 - Consultar histórico")
+        print("0 - Voltar")
+        print("--------------------------------------")
+
+        opcao = input("Escolha uma opção: ").strip()
+
+        if opcao == "1":
+            registrar_medicao()
+
+        elif opcao == "2":
+            consultar_historico()
+
+        elif opcao == "0":
+            break
+
+        else:
+            print("\nOpção inválida.")
 
 
 # =====================================================
@@ -517,7 +797,7 @@ def meu_perfil():
             cursor.execute(
                 f"""
                 SELECT idusuario, nome, email, senha
-                FROM {tabela}
+                FROM `{tabela}`
                 WHERE idusuario = %s
                 """,
                 (usuario["idusuario"],)
@@ -589,7 +869,7 @@ def trocar_senha(conexao, tabela, usuario):
     try:
         cursor.execute(
             f"""
-            UPDATE {tabela}
+            UPDATE `{tabela}`
             SET senha = %s
             WHERE idusuario = %s
             """,
@@ -598,7 +878,6 @@ def trocar_senha(conexao, tabela, usuario):
 
         conexao.commit()
 
-        # Atualiza a senha armazenada na sessão
         usuario["senha"] = senha_hash
 
         print("\nSenha alterada com sucesso!")
@@ -627,8 +906,9 @@ def menu_usuario():
         print("--------------------------------------")
         print("1 - Cadastrar sensor")
         print("2 - Consultar sensores")
-        print("3 - Meu perfil")
-        print("4 - Encerrar sessão")
+        print("3 - Medições")
+        print("4 - Meu perfil")
+        print("5 - Encerrar sessão")
         print("0 - Sair do programa")
         print("--------------------------------------")
 
@@ -641,9 +921,12 @@ def menu_usuario():
             consultar_sensores()
 
         elif opcao == "3":
-            meu_perfil()
+            menu_medicoes()
 
         elif opcao == "4":
+            meu_perfil()
+
+        elif opcao == "5":
             Sessao.encerrar()
             print("\nSessão encerrada.")
 
@@ -661,7 +944,6 @@ def menu_usuario():
 
 def menu_principal():
     while True:
-
         print("\n======================================")
         print("          SISTEMA DE ESTUFA IOT")
         print("======================================")
@@ -690,7 +972,7 @@ def menu_principal():
 
 
 # =====================================================
-# EXECUÇÃO
+# EXECUÇÃO DO SISTEMA
 # =====================================================
 
 if __name__ == "__main__":
