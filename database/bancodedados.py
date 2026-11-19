@@ -1,54 +1,38 @@
 
 import os
 import mysql.connector
-from mysql.connector import Error
-from dotenv import load_dotenv
 
-load_dotenv()
+from dotenv import load_dotenv
+from pathlib import Path
+from mysql.connector import Error
+
+
+# Localiza e carrega o arquivo .env na raiz do projeto
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / ".env"
+
+load_dotenv(dotenv_path=ENV_PATH)
 
 
 def conectar():
     try:
         conexao = mysql.connector.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "3306")),
-            user=os.getenv("DB_USER", "root"),
-            password=os.getenv("DB_PASSWORD", ""),
-            database=os.getenv("DB_NAME", "estufa_iot01")
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT", 3306)),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME"),
+            auth_plugin="caching_sha2_password"
         )
 
         if conexao.is_connected():
+            print("Conectado ao banco estufa_iot02!")
             return conexao
 
     except Error as erro:
         print(f"Erro ao conectar ao MySQL: {erro}")
         return None
 
-
-def testar_conexao():
-    conexao = conectar()
-
-    if conexao is None:
-        return False
-
-    cursor = None
-
-    try:
-        cursor = conexao.cursor()
-        cursor.execute("SELECT DATABASE()")
-        resultado = cursor.fetchone()
-
-        print("Conexão realizada com sucesso!")
-        print(f"Banco conectado: {resultado[0]}")
-
-        return True
-
-    except Error as erro:
-        print(f"Erro ao testar banco: {erro}")
-        return False
-
-    finally:
-        if cursor:
-            cursor.close()
-
-        conexao.close()
+    except (TypeError, ValueError) as erro:
+        print(f"Erro nas configurações do .env: {erro}")
+        return None
