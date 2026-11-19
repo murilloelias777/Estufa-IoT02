@@ -1,0 +1,149 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medições | Estufa IoT01</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="dashboard-container">
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>🌱 Estufa IoT01</h2>
+            <p>Monitoramento inteligente</p>
+        </div>
+
+        <nav class="sidebar-menu">
+            <a href="{{ url_for('index') }}">📊 Dashboard</a>
+            <a href="{{ url_for('sensores') }}">📡 Sensores</a>
+            <a href="{{ url_for('medicoes') }}" class="active">📈 Medições</a>
+            <a href="{{ url_for('logout') }}">🚪 Sair</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header class="topbar">
+            <div>
+                <h1>Histórico de medições</h1>
+                <p>Acompanhe os dados coletados pelos sensores da estufa.</p>
+            </div>
+            <div class="user-info">
+                Olá, {{ session.get('usuario_nome', 'Usuário') }}
+            </div>
+        </header>
+
+        {% if erro %}
+            <div class="auth-messages">{{ erro }}</div>
+        {% endif %}
+
+        <section class="welcome-section">
+            <h2>Registrar medição</h2>
+            <p>Insira uma leitura para um dos sensores ativos.</p>
+        </section>
+
+        <section class="sensor-form-card">
+            <form method="POST" action="{{ url_for('medicoes') }}" class="sensor-form">
+
+                <div class="auth-form-group">
+                    <label for="idsensor">Sensor</label>
+                    <select id="idsensor" name="idsensor" required>
+                        <option value="">Selecione um sensor</option>
+                        {% for sensor in sensores %}
+                            <option value="{{ sensor.idsensor }}">
+                                {{ sensor.tipo }} — {{ sensor.descricao }}
+                                ({{ sensor.unidade_medida }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="auth-form-group">
+                    <label for="valor">Valor medido</label>
+                    <input
+                        type="number"
+                        id="valor"
+                        name="valor"
+                        step="0.01"
+                        placeholder="Digite o valor da medição"
+                        required>
+                </div>
+
+                <button type="submit" class="auth-button">
+                    + Registrar medição
+                </button>
+            </form>
+        </section>
+
+        <section class="medicao-historico sensor-list-section">
+            <div class="section-heading">
+                <div>
+                    <h2>Últimas medições</h2>
+                    <p>Consulte as leituras registradas pelos sensores.</p>
+                </div>
+            </div>
+
+            <form method="GET" action="{{ url_for('medicoes') }}" class="filter-form">
+                <label for="filtro_sensor">Filtrar por sensor:</label>
+
+                <select name="sensor" id="filtro_sensor">
+                    <option value="">Todos os sensores</option>
+                    {% for sensor in todos_sensores %}
+                        <option value="{{ sensor.idsensor }}"
+                            {% if sensor.idsensor|string == filtro_sensor|string %}selected{% endif %}>
+                            {{ sensor.tipo }} — {{ sensor.descricao }}
+                        </option>
+                    {% endfor %}
+                </select>
+
+                <button type="submit" class="status-button activate">
+                    Filtrar
+                </button>
+
+                <a href="{{ url_for('medicoes') }}" class="clear-filter">
+                    Limpar filtro
+                </a>
+            </form>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Sensor</th>
+                            <th>Descrição</th>
+                            <th>Valor</th>
+                            <th>Data e hora</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for medicao in medicoes %}
+                        <tr>
+                            <td>#{{ medicao.idmedicao }}</td>
+                            <td>{{ medicao.tipo }}</td>
+                            <td>{{ medicao.descricao }}</td>
+                            <td>
+                                <strong>
+                                    {{ medicao.valor }} {{ medicao.unidade_medida }}
+                                </strong>
+                            </td>
+                            <td>{{ medicao.data_hora }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="empty-table">
+                                Nenhuma medição encontrada para esse filtro.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+</div>
+</body>
+</html>

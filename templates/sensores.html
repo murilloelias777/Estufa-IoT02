@@ -1,0 +1,156 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensores | Estufa IoT01</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="dashboard-container">
+
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2>🌱 Estufa IoT01</h2>
+            <p>Monitoramento inteligente</p>
+        </div>
+
+        <nav class="sidebar-menu">
+            <a href="{{ url_for('index') }}">📊 Dashboard</a>
+            <a href="{{ url_for('sensores') }}" class="active">📡 Sensores</a>
+            <a href="{{ url_for('medicoes') }}">📈 Medições</a>
+            <a href="{{ url_for('logout') }}">🚪 Sair</a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header class="topbar">
+            <div>
+                <h1>Gerenciamento de sensores</h1>
+                <p>Cadastre e acompanhe os sensores da sua estufa.</p>
+            </div>
+            <div class="user-info">
+                Olá, {{ session.get('usuario_nome', 'Usuário') }}
+            </div>
+        </header>
+
+        {% if erro %}
+            <div class="auth-messages">{{ erro }}</div>
+        {% endif %}
+
+        <section class="welcome-section">
+            <h2>Cadastro de sensores</h2>
+            <p>Adicione um novo sensor ao sistema de monitoramento.</p>
+        </section>
+
+        <section class="sensor-form-card">
+            <form method="POST" action="{{ url_for('sensores') }}" class="sensor-form">
+
+                <div class="auth-form-group">
+                    <label for="tipo">Tipo de sensor</label>
+                    <select id="tipo" name="tipo" required>
+                        <option value="">Selecione o tipo</option>
+                        <option value="Temperatura">Temperatura</option>
+                        <option value="Umidade">Umidade</option>
+                        <option value="Luminosidade">Luminosidade</option>
+                        <option value="Umidade do solo">Umidade do solo</option>
+                        <option value="CO2">CO2</option>
+                    </select>
+                </div>
+
+                <div class="auth-form-group">
+                    <label for="descricao">Descrição</label>
+                    <input
+                        type="text"
+                        id="descricao"
+                        name="descricao"
+                        placeholder="Ex.: Sensor de temperatura da estufa"
+                        required>
+                </div>
+
+                <div class="auth-form-group">
+                    <label for="unidade_medida">Unidade de medida</label>
+                    <select id="unidade_medida" name="unidade_medida" required>
+                        <option value="">Selecione a unidade</option>
+                        <option value="°C">°C</option>
+                        <option value="%">%</option>
+                        <option value="Lux">Lux</option>
+                        <option value="ppm">ppm</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="auth-button">
+                    + Cadastrar sensor
+                </button>
+            </form>
+        </section>
+
+        <section class="medicao-historico sensor-list-section">
+            <div class="section-heading">
+                <div>
+                    <h2>Sensores cadastrados</h2>
+                    <p>Todos os sensores registrados na sua estufa.</p>
+                </div>
+                <span class="sensor-counter">
+                    {{ sensores|length }} sensores
+                </span>
+            </div>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Tipo</th>
+                            <th>Descrição</th>
+                            <th>Unidade</th>
+                            <th>Status</th>
+                            <th>Ação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sensor in sensores %}
+                        <tr>
+                            <td>#{{ sensor.idsensor }}</td>
+                            <td>{{ sensor.tipo }}</td>
+                            <td>{{ sensor.descricao }}</td>
+                            <td>{{ sensor.unidade_medida }}</td>
+                            <td>
+                                {% if sensor.status %}
+                                    <span class="status-pill status-active">Ativo</span>
+                                {% else %}
+                                    <span class="status-pill status-inactive">Inativo</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <form method="POST"
+                                      action="/sensores/status/{{ sensor.idsensor }}">
+                                    {% if sensor.status %}
+                                        <button type="submit" class="status-button deactivate">
+                                            Desativar
+                                        </button>
+                                    {% else %}
+                                        <button type="submit" class="status-button activate">
+                                            Ativar
+                                        </button>
+                                    {% endif %}
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" class="empty-table">
+                                Nenhum sensor cadastrado ainda.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+</div>
+</body>
+</html>
