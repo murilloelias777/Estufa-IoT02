@@ -1,111 +1,156 @@
 
+import re
+import math
+import unicodedata
 from getpass import getpass
-from decimal import Decimal, InvalidOperation
 
-from werkzeug.security import (
-    generate_password_hash,
-    check_password_hash
-)
-
-from mysql.connector import Error
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from database.bancodedados import conectar
 from sessao import Sessao
-from medicao import Medicao
 
 
-# =========================================================
-# FUNÇÕES AUXILIARES
-# =========================================================
+# ============================================================
+# VALIDAÇÕES
+# ============================================================
 
-def pausar():
-    input("\nPressione ENTER para continuar...")
-
-
-def obter_conexao():
-    conexao = conectar()
-
-    if conexao is None:
-        print("Não foi possível conectar ao banco de dados.")
-
-    return conexao
+def contar_letras(texto):
+    return sum(
+        1 for caractere in texto
+        if unicodedata.category(caractere).startswith("L")
+    )
 
 
-def usuario_exige_login():
-    if not Sessao.autenticada():
-        print("Você precisa estar autenticado.")
-        return False
+def validar_texto(mensagem, minimo_letras=3, permitir_vazio=False):
+    while True:
+        texto = input(mensagem).strip()
 
-    return True
+        if permitir_vazio and texto == "":
+            return ""
+
+        if not texto:
+            print("Erro: este campo é obrigatório.")
+            continue
+
+        if contar_letras(texto) < minimo_letras:
+            print(f"Erro: informe pelo menos {minimo_letras} letras.")
+            continue
+
+        return texto
 
 
-def ler_decimal(mensagem):
+def validar_unidade(mensagem, permitir_vazio=False):
+    while True:
+        unidade = input(mensagem).strip()
+
+        if permitir_vazio and unidade == "":
+            return ""
+
+        if not unidade:
+            print("Erro: informe a unidade de medida.")
+            continue
+
+        if not unidade.isalpha():
+            print(
+                "Erro: a unidade deve conter somente letras, "
+                "sem números, espaços ou caracteres especiais."
+            )
+            continue
+
+        if len(unidade) > 5:
+            print("Erro: a unidade deve ter no máximo 5 letras.")
+            continue
+
+        return unidade
+
+
+def validar_email(mensagem="E-mail: "):
+    while True:
+        email = input(mensagem).strip().lower()
+
+        padrao = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+
+        if not re.fullmatch(padrao, email):
+            print("Erro: informe um e-mail válido.")
+            continue
+
+        return email
+
+
+def validar_id(mensagem):
+    while True:
+        valor = input(mensagem).strip()
+
+        if not valor.isdigit() or int(valor) <= 0:
+            print("Erro: informe um ID numérico válido.")
+            continue
+
+        return int(valor)
+
+
+def validar_valor_medicao(mensagem):
     while True:
         entrada = input(mensagem).strip().replace(",", ".")
 
         try:
-            valor = Decimal(entrada)
+            valor = float(entrada)
 
-            if not valor.is_finite():
-                print("Digite um número válido.")
+            if not math.isfinite(valor):
+                print("Erro: informe um valor numérico válido.")
                 continue
 
-            if valor < Decimal("-99999999.99") or valor > Decimal("99999999.99"):
-                print("Valor fora do limite permitido.")
-                continue
+            return valor
 
-            return valor.quantize(Decimal("0.01"))
-
-        except InvalidOperation:
-            print("Valor inválido. Exemplo: 25.50")
+        except ValueError:
+            print("Erro: digite somente um valor numérico.")
 
 
-# =========================================================
+def validar_senha(mensagem="Senha: "):
+    while True:
+        senha = getpass(mensagem)
+
+        if len(senha) < 6:
+            print("Erro: a senha deve ter pelo menos 6 caracteres.")
+            continue
+
+        return senha
+
+
+# ============================================================
 # CADASTRO DE USUÁRIO
-# =========================================================
+# ============================================================
 
 def cadastrar_usuario():
-    print("\n========== CADASTRO DE USUÁRIO ==========")
+    conexao = conectar()
 
-    nome = input("Nome: ").strip()
-    email = input("E-mail: ").strip().lower()
-
-    if not nome or not email:
-        print("Nome e e-mail são obrigatórios.")
+    if not conexao:
         return
 
-    if len(nome) > 50 or len(email) > 100:
-        print("Nome ou e-mail ultrapassam o limite permitido.")
-        return
-
-    senha = getpass("Senha: ")
-    confirmar = getpass("Confirme a senha: ")
-
-    if not senha:
-        print("A senha não pode ficar vazia.")
-        return
-
-    if senha != confirmar:
-        print("As senhas não correspondem.")
-        return
-
-    senha_hash = generate_password_hash(senha)
-
-    conexao = obter_conexao()
-    if conexao is None:
-        return
-
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(dictionary=True)
 
     try:
+        print("\n========== CADASTRO DE USUÁRIO ==========")
+
+        nome = validar_texto("Nome: ")
+        email = validar_email()
+
         cursor.execute(
             "SELECT idusuario FROM usuario WHERE email = %s",
             (email,)
         )
 
         if cursor.fetchone():
-            print("Este e-mail já está cadastrado.")
+            print("\nEste e-mail já está cadastrado.")
             return
+
+        senha = validar_senha()
+        confirmar_senha = getpass("Confirme a senha: ")
+
+        if senha != confirmar_senha:
+            print("\nAs senhas não correspondem.")
+            return
+
+        senha_hash = generate_password_hash(senha)
 
         cursor.execute(
             """
@@ -116,34 +161,36 @@ def cadastrar_usuario():
         )
 
         conexao.commit()
-        print("Usuário cadastrado com sucesso!")
 
-    except Error as erro:
+        print("\nUsuário cadastrado com sucesso!")
+
+    except Exception as erro:
         conexao.rollback()
-        print(f"Erro ao cadastrar usuário: {erro}")
+        print(f"\nErro ao cadastrar usuário: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
+# ============================================================
 # LOGIN
-# =========================================================
+# ============================================================
 
 def login():
-    print("\n========== LOGIN ==========")
+    conexao = conectar()
 
-    email = input("E-mail: ").strip().lower()
-    senha = getpass("Senha: ")
-
-    conexao = obter_conexao()
-    if conexao is None:
+    if not conexao:
         return
 
     cursor = conexao.cursor(dictionary=True)
 
     try:
+        print("\n========== LOGIN ==========")
+
+        email = validar_email()
+        senha = getpass("Senha: ")
+
         cursor.execute(
             """
             SELECT idusuario, nome, email, senha
@@ -155,255 +202,219 @@ def login():
 
         usuario = cursor.fetchone()
 
-        if usuario is None:
-            print("Usuário não encontrado.")
-            return
+        if usuario and check_password_hash(usuario["senha"], senha):
+            Sessao.iniciar(usuario)
+            print(f"\nBem-vindo(a), {usuario['nome']}!")
+        else:
+            print("\nE-mail ou senha incorretos.")
 
-        if not check_password_hash(usuario["senha"], senha):
-            print("Senha incorreta.")
-            return
-
-        Sessao.iniciar(usuario)
-
-        print(f"\nBem-vindo(a), {usuario['nome']}!")
-        print("Login realizado com sucesso.")
-
-    except Error as erro:
-        print(f"Erro ao realizar login: {erro}")
+    except Exception as erro:
+        print(f"\nErro ao realizar login: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
-# PERFIL DO USUÁRIO
-# =========================================================
-
-def meu_perfil():
-    if not usuario_exige_login():
-        return
-
-    usuario = Sessao.usuario_atual()
-
-    print("\n========== MEU PERFIL ==========")
-    print(f"ID: {usuario['idusuario']}")
-    print(f"Nome: {usuario['nome']}")
-    print(f"E-mail: {usuario['email']}")
-    print("Senha: ********")
-
-    print("\n1 - Alterar senha")
-    print("0 - Voltar")
-
-    opcao = input("Escolha: ").strip()
-
-    if opcao == "1":
-        alterar_senha()
-
-
-def alterar_senha():
-    if not usuario_exige_login():
-        return
-
-    usuario = Sessao.usuario_atual()
-
-    senha_atual = getpass("Digite sua senha atual: ")
-
-    if not check_password_hash(usuario["senha"], senha_atual):
-        print("Senha atual incorreta.")
-        return
-
-    nova_senha = getpass("Digite a nova senha: ")
-    confirmar = getpass("Confirme a nova senha: ")
-
-    if not nova_senha:
-        print("A senha não pode ficar vazia.")
-        return
-
-    if nova_senha != confirmar:
-        print("As senhas não correspondem.")
-        return
-
-    senha_hash = generate_password_hash(nova_senha)
-
-    conexao = obter_conexao()
-    if conexao is None:
-        return
-
-    cursor = conexao.cursor()
-
-    try:
-        cursor.execute(
-            """
-            UPDATE usuario
-            SET senha = %s
-            WHERE idusuario = %s
-            """,
-            (senha_hash, usuario["idusuario"])
-        )
-
-        conexao.commit()
-        usuario["senha"] = senha_hash
-
-        print("Senha alterada com sucesso!")
-
-    except Error as erro:
-        conexao.rollback()
-        print(f"Erro ao alterar senha: {erro}")
-
-    finally:
-        cursor.close()
-        conexao.close()
-
-
-# =========================================================
-# CADASTRAR SENSOR
-# =========================================================
+# ============================================================
+# CADASTRO DE SENSOR
+# ============================================================
 
 def cadastrar_sensor():
-    if not usuario_exige_login():
+    if not Sessao.autenticada():
+        print("\nFaça login para cadastrar sensores.")
         return
 
-    print("\n========== CADASTRAR SENSOR ==========")
+    conexao = conectar()
 
-    tipo = input("Tipo: ").strip()
-    descricao = input("Descrição: ").strip()
-    unidade = input("Unidade de medida: ").strip()
-
-    if not tipo or not descricao or not unidade:
-        print("Todos os campos são obrigatórios.")
-        return
-
-    if len(tipo) > 30 or len(descricao) > 255 or len(unidade) > 5:
-        print("Um ou mais campos ultrapassam o limite permitido.")
-        return
-
-    print("\n1 - Ativo")
-    print("0 - Inativo")
-
-    status = input("Status: ").strip()
-
-    if status not in ("0", "1"):
-        print("Status inválido.")
-        return
-
-    conexao = obter_conexao()
-    if conexao is None:
+    if not conexao:
         return
 
     cursor = conexao.cursor()
 
     try:
+        print("\n========== CADASTRAR SENSOR ==========")
+
+        tipo = validar_texto("Tipo do sensor: ")
+        descricao = validar_texto("Descrição: ")
+        unidade = validar_unidade("Unidade de medida: ")
+
+        id_usuario = Sessao.obter_id_usuario()
+
         cursor.execute(
             """
             INSERT INTO sensor
                 (tipo, descricao, unidade_medida, status, id_usuario_cadastro)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (
-                tipo,
-                descricao,
-                unidade,
-                int(status),
-                Sessao.obter_id_usuario()
-            )
+            (tipo, descricao, unidade, True, id_usuario)
         )
 
         conexao.commit()
 
-        print("Sensor cadastrado com sucesso!")
+        print("\nSensor cadastrado com sucesso!")
         print(f"ID do sensor: {cursor.lastrowid}")
+        print("Status: ATIVO")
 
-    except Error as erro:
+    except Exception as erro:
         conexao.rollback()
-        print(f"Erro ao cadastrar sensor: {erro}")
+        print(f"\nErro ao cadastrar sensor: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
+# ============================================================
 # CONSULTAR SENSORES
-# =========================================================
+# ============================================================
 
 def consultar_sensores():
-    if not usuario_exige_login():
+    if not Sessao.autenticada():
+        print("\nFaça login para consultar sensores.")
         return
 
-    conexao = obter_conexao()
-    if conexao is None:
+    conexao = conectar()
+
+    if not conexao:
         return
 
     cursor = conexao.cursor(dictionary=True)
 
     try:
-        cursor.execute(
-            """
-            SELECT
-                s.idsensor,
-                s.tipo,
-                s.descricao,
-                s.unidade_medida,
-                s.status,
-                s.id_usuario_cadastro,
-                u.nome AS nome_usuario
-            FROM sensor s
-            LEFT JOIN usuario u
-                ON s.id_usuario_cadastro = u.idusuario
-            ORDER BY s.idsensor
-            """
-        )
+        while True:
+            # Consulta novamente os dados a cada retorno à lista.
+            print("\n========== SENSORES CADASTRADOS ==========")
 
-        sensores = cursor.fetchall()
+            cursor.execute(
+                """
+                SELECT idsensor, tipo, status
+                FROM sensor
+                ORDER BY idsensor
+                """
+            )
 
-        print("\n========== SENSORES CADASTRADOS ==========")
+            sensores = cursor.fetchall()
 
-        if not sensores:
-            print("Nenhum sensor cadastrado.")
-            return
-
-        for sensor in sensores:
-            status = "ATIVO" if sensor["status"] else "INATIVO"
-
-            print("------------------------------------------")
-            print(f"ID: {sensor['idsensor']}")
-            print(f"Tipo: {sensor['tipo']}")
-            print(f"Descrição: {sensor['descricao']}")
-            print(f"Unidade: {sensor['unidade_medida']}")
-            print(f"Status: {status}")
-            print(f"Cadastrado por: {sensor['nome_usuario']}")
-
-        entrada = input(
-            "\nDigite o ID do sensor para consultar "
-            "(ou ENTER para voltar): "
-        ).strip()
-
-        if entrada:
-            if not entrada.isdigit():
-                print("ID inválido.")
+            if not sensores:
+                print("\nNenhum sensor cadastrado.")
                 return
 
-            consultar_sensor_individual(int(entrada))
+            for sensor in sensores:
+                status = (
+                    "ATIVO"
+                    if bool(sensor["status"])
+                    else "INATIVO"
+                )
 
-    except Error as erro:
-        print(f"Erro ao consultar sensores: {erro}")
+                print(
+                    f"\nID: {sensor['idsensor']} | "
+                    f"Tipo: {sensor['tipo']} | "
+                    f"Status: {status}"
+                )
+
+            print("\n0 - Voltar")
+
+            id_sensor = input(
+                "\nDigite o ID do sensor para consultar: "
+            ).strip()
+
+            if id_sensor == "0":
+                break
+
+            if not id_sensor.isdigit() or int(id_sensor) <= 0:
+                print("\nDigite um ID válido.")
+                continue
+
+            cursor.execute(
+                """
+                SELECT
+                    s.idsensor,
+                    s.tipo,
+                    s.descricao,
+                    s.unidade_medida,
+                    s.status,
+                    s.id_usuario_cadastro,
+                    u.nome AS usuario_cadastro
+                FROM sensor s
+                LEFT JOIN usuario u
+                    ON s.id_usuario_cadastro = u.idusuario
+                WHERE s.idsensor = %s
+                """,
+                (int(id_sensor),)
+            )
+
+            sensor = cursor.fetchone()
+
+            if not sensor:
+                print("\nSensor não encontrado.")
+                continue
+
+            exibir_detalhes_sensor(sensor)
+
+            while True:
+                print("\n========== OPÇÕES DO SENSOR ==========")
+                print("1 - Alterar dados do sensor")
+                print("2 - Alterar status do sensor")
+                print("3 - Excluir sensor")
+                print("4 - Consultar medições deste sensor")
+                print("0 - Voltar à lista de sensores")
+
+                opcao = input("\nEscolha: ").strip()
+
+                if opcao == "1":
+                    alterar_sensor(sensor["idsensor"])
+                    break
+
+                elif opcao == "2":
+                    alterar_status_sensor(sensor["idsensor"])
+                    break
+
+                elif opcao == "3":
+                    excluir_sensor(sensor["idsensor"])
+                    break
+
+                elif opcao == "4":
+                    historico_medicoes(sensor["idsensor"])
+                    break
+
+                elif opcao == "0":
+                    break
+
+                else:
+                    print("\nOpção inválida.")
+
+            # O while recomeça e atualiza a lista automaticamente.
+
+    except Exception as erro:
+        print(f"\nErro ao consultar sensores: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
-# CONSULTAR SENSOR INDIVIDUAL
-# =========================================================
+def exibir_detalhes_sensor(sensor):
+    status = "ATIVO" if bool(sensor["status"]) else "INATIVO"
 
-def consultar_sensor_individual(id_sensor):
-    if not usuario_exige_login():
-        return
+    print("\n========== INFORMAÇÕES DO SENSOR ==========")
+    print(f"ID: {sensor['idsensor']}")
+    print(f"Tipo: {sensor['tipo']}")
+    print(f"Descrição: {sensor['descricao']}")
+    print(f"Unidade de medida: {sensor['unidade_medida']}")
+    print(f"Status: {status}")
+    print(f"ID do usuário que cadastrou: {sensor['id_usuario_cadastro']}")
+    print(f"Usuário que cadastrou: {sensor['usuario_cadastro']}")
 
-    conexao = obter_conexao()
-    if conexao is None:
+
+# ============================================================
+# ALTERAR SENSOR
+# ============================================================
+
+def alterar_sensor(id_sensor):
+    conexao = conectar()
+
+    if not conexao:
         return
 
     cursor = conexao.cursor(dictionary=True)
@@ -411,121 +422,43 @@ def consultar_sensor_individual(id_sensor):
     try:
         cursor.execute(
             """
-            SELECT
-                s.idsensor,
-                s.tipo,
-                s.descricao,
-                s.unidade_medida,
-                s.status,
-                s.id_usuario_cadastro,
-                u.nome AS nome_usuario
-            FROM sensor s
-            LEFT JOIN usuario u
-                ON s.id_usuario_cadastro = u.idusuario
-            WHERE s.idsensor = %s
+            SELECT tipo, descricao, unidade_medida
+            FROM sensor
+            WHERE idsensor = %s
             """,
             (id_sensor,)
         )
 
         sensor = cursor.fetchone()
 
-        if sensor is None:
-            print("Sensor não encontrado.")
+        if not sensor:
+            print("\nSensor não encontrado.")
             return
 
-        print("\n========== INFORMAÇÕES DO SENSOR ==========")
-        print(f"ID: {sensor['idsensor']}")
-        print(f"Tipo: {sensor['tipo']}")
-        print(f"Descrição: {sensor['descricao']}")
-        print(f"Unidade: {sensor['unidade_medida']}")
-        print(f"Status: {'ATIVO' if sensor['status'] else 'INATIVO'}")
-        print(f"Usuário que cadastrou: {sensor['nome_usuario']}")
+        print("\n========== ALTERAR SENSOR ==========")
+        print("Deixe o campo vazio para manter o valor atual.")
 
-    except Error as erro:
-        print(f"Erro ao consultar sensor: {erro}")
-        return
-
-    finally:
-        cursor.close()
-        conexao.close()
-
-    menu_sensor(id_sensor)
-
-
-# =========================================================
-# MENU DO SENSOR
-# =========================================================
-
-def menu_sensor(id_sensor):
-    while True:
-        print("\n========== OPÇÕES DO SENSOR ==========")
-        print("1 - Alterar informações")
-        print("2 - Alterar status")
-        print("3 - Excluir sensor")
-        print("4 - Ver histórico de medições")
-        print("0 - Voltar")
-
-        opcao = input("Escolha: ").strip()
-
-        if opcao == "1":
-            alterar_sensor(id_sensor)
-
-        elif opcao == "2":
-            alterar_status_sensor(id_sensor)
-
-        elif opcao == "3":
-            excluir_sensor(id_sensor)
-            return
-
-        elif opcao == "4":
-            historico_medicoes(id_sensor)
-
-        elif opcao == "0":
-            return
-
-        else:
-            print("Opção inválida.")
-
-
-# =========================================================
-# ALTERAR SENSOR
-# =========================================================
-
-def alterar_sensor(id_sensor):
-    if not usuario_exige_login():
-        return
-
-    conexao = obter_conexao()
-    if conexao is None:
-        return
-
-    cursor = conexao.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            "SELECT * FROM sensor WHERE idsensor = %s",
-            (id_sensor,)
+        print(f"Tipo atual: {sensor['tipo']}")
+        tipo = validar_texto(
+            "Novo tipo: ",
+            permitir_vazio=True
         )
 
-        sensor = cursor.fetchone()
+        print(f"Descrição atual: {sensor['descricao']}")
+        descricao = validar_texto(
+            "Nova descrição: ",
+            permitir_vazio=True
+        )
 
-        if sensor is None:
-            print("Sensor não encontrado.")
-            return
+        print(f"Unidade atual: {sensor['unidade_medida']}")
+        unidade = validar_unidade(
+            "Nova unidade: ",
+            permitir_vazio=True
+        )
 
-        print("\nDeixe vazio para manter o valor atual.")
-
-        tipo = input(f"Tipo [{sensor['tipo']}]: ").strip()
-        descricao = input(f"Descrição [{sensor['descricao']}]: ").strip()
-        unidade = input(f"Unidade [{sensor['unidade_medida']}]: ").strip()
-
-        tipo = tipo or sensor["tipo"]
-        descricao = descricao or sensor["descricao"]
-        unidade = unidade or sensor["unidade_medida"]
-
-        if len(tipo) > 30 or len(descricao) > 255 or len(unidade) > 5:
-            print("Um ou mais campos ultrapassam o limite permitido.")
-            return
+        tipo = tipo if tipo else sensor["tipo"]
+        descricao = descricao if descricao else sensor["descricao"]
+        unidade = unidade if unidade else sensor["unidade_medida"]
 
         cursor.execute(
             """
@@ -539,101 +472,153 @@ def alterar_sensor(id_sensor):
         )
 
         conexao.commit()
-        print("Sensor atualizado com sucesso!")
 
-    except Error as erro:
+        print("\nSensor atualizado com sucesso!")
+
+    except Exception as erro:
         conexao.rollback()
-        print(f"Erro ao alterar sensor: {erro}")
+        print(f"\nErro ao alterar sensor: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
-# ALTERAR STATUS
-# =========================================================
+# ============================================================
+# ALTERAR STATUS DO SENSOR
+# ============================================================
 
 def alterar_status_sensor(id_sensor):
-    if not usuario_exige_login():
+    conexao = conectar()
+
+    if not conexao:
         return
 
-    print("\n1 - Ativar sensor")
-    print("0 - Desativar sensor")
-
-    opcao = input("Escolha: ").strip()
-
-    if opcao not in ("0", "1"):
-        print("Opção inválida.")
-        return
-
-    conexao = obter_conexao()
-    if conexao is None:
-        return
-
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(dictionary=True)
 
     try:
+        cursor.execute(
+            """
+            SELECT idsensor, tipo, status
+            FROM sensor
+            WHERE idsensor = %s
+            FOR UPDATE
+            """,
+            (id_sensor,)
+        )
+
+        sensor = cursor.fetchone()
+
+        if not sensor:
+            conexao.rollback()
+            print("\nSensor não encontrado.")
+            return
+
+        status_atual = bool(sensor["status"])
+
+        print("\n========== ALTERAR STATUS ==========")
+        print(f"Sensor: {sensor['tipo']}")
+
+        if status_atual:
+            print("Status atual: ATIVO")
+            print("\n1 - Desativar sensor")
+            print("0 - Voltar")
+        else:
+            print("Status atual: INATIVO")
+            print("\n1 - Ativar sensor")
+            print("0 - Voltar")
+
+        opcao = input("\nEscolha uma opção: ").strip()
+
+        if opcao == "0":
+            conexao.rollback()
+            print("\nOperação cancelada.")
+            return
+
+        elif opcao == "1":
+            novo_status = not status_atual
+
+        else:
+            conexao.rollback()
+            print("\nOpção inválida.")
+            return
+
         cursor.execute(
             """
             UPDATE sensor
             SET status = %s
             WHERE idsensor = %s
             """,
-            (int(opcao), id_sensor)
+            (novo_status, id_sensor)
         )
 
         conexao.commit()
-        print("Status atualizado com sucesso!")
 
-    except Error as erro:
+        print("\nStatus atualizado com sucesso!")
+
+        if novo_status:
+            print("Novo status: ATIVO")
+        else:
+            print("Novo status: INATIVO")
+            print("O registro de novas medições está bloqueado.")
+
+    except Exception as erro:
         conexao.rollback()
-        print(f"Erro ao alterar status: {erro}")
+        print(f"\nErro ao alterar status: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
+# ============================================================
 # EXCLUIR SENSOR
-# =========================================================
+# ============================================================
 
 def excluir_sensor(id_sensor):
-    if not usuario_exige_login():
+    conexao = conectar()
+
+    if not conexao:
         return
 
-    confirmacao = input(
-        f"Confirma a exclusão do sensor {id_sensor}? (s/n): "
-    ).strip().lower()
-
-    if confirmacao != "s":
-        print("Exclusão cancelada.")
-        return
-
-    conexao = obter_conexao()
-    if conexao is None:
-        return
-
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(dictionary=True)
 
     try:
         cursor.execute(
-            "SELECT idsensor FROM sensor WHERE idsensor = %s",
+            """
+            SELECT idsensor
+            FROM sensor
+            WHERE idsensor = %s
+            """,
             (id_sensor,)
         )
 
-        if cursor.fetchone() is None:
-            print("Sensor não encontrado.")
+        if not cursor.fetchone():
+            print("\nSensor não encontrado.")
             return
 
         cursor.execute(
-            "SELECT COUNT(*) FROM MEDICAO WHERE idsensor = %s",
+            """
+            SELECT COUNT(*) AS total
+            FROM MEDICAO
+            WHERE idsensor = %s
+            """,
             (id_sensor,)
         )
 
-        if cursor.fetchone()[0] > 0:
-            print("Não é possível excluir: o sensor possui medições.")
+        resultado = cursor.fetchone()
+
+        if resultado["total"] > 0:
+            print("\nNão é possível excluir este sensor.")
+            print("Existem medições vinculadas a ele.")
+            return
+
+        confirmacao = input(
+            "\nDeseja realmente excluir este sensor? (s/n): "
+        ).strip().lower()
+
+        if confirmacao != "s":
+            print("\nExclusão cancelada.")
             return
 
         cursor.execute(
@@ -642,52 +627,21 @@ def excluir_sensor(id_sensor):
         )
 
         conexao.commit()
-        print("Sensor excluído com sucesso!")
 
-    except Error as erro:
+        print("\nSensor excluído com sucesso!")
+
+    except Exception as erro:
         conexao.rollback()
-        print(f"Erro ao excluir sensor: {erro}")
+        print(f"\nErro ao excluir sensor: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
-# CONSULTAR SENSORES PARA MEDIÇÕES
-# =========================================================
-
-def consultar_sensores_disponiveis():
-    conexao = obter_conexao()
-
-    if conexao is None:
-        return []
-
-    cursor = conexao.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            """
-            SELECT idsensor, tipo, descricao, unidade_medida, status
-            FROM sensor
-            ORDER BY idsensor
-            """
-        )
-
-        return cursor.fetchall()
-
-    except Error as erro:
-        print(f"Erro ao consultar sensores: {erro}")
-        return []
-
-    finally:
-        cursor.close()
-        conexao.close()
-
-
-# =========================================================
+# ============================================================
 # REGISTRAR MEDIÇÃO
-# =========================================================
+# ============================================================
 
 def registrar_medicao():
     if not Sessao.autenticada():
@@ -702,14 +656,35 @@ def registrar_medicao():
     cursor = conexao.cursor(dictionary=True)
 
     try:
-        print("\n--- REGISTRAR MEDIÇÃO ---")
+        print("\n========== SENSORES ATIVOS ==========")
 
-        id_sensor = input("Digite o ID do sensor: ")
-
-        # Verifica se o sensor existe e se está ativo
         cursor.execute(
             """
-            SELECT idsensor, tipo, descricao, unidade_medida, status
+            SELECT idsensor, tipo, unidade_medida
+            FROM sensor
+            WHERE status = 1
+            ORDER BY idsensor
+            """
+        )
+
+        sensores = cursor.fetchall()
+
+        if not sensores:
+            print("\nNão existem sensores ativos para registrar medições.")
+            return
+
+        for sensor in sensores:
+            print(
+                f"ID: {sensor['idsensor']} | "
+                f"Tipo: {sensor['tipo']} | "
+                f"Unidade: {sensor['unidade_medida']}"
+            )
+
+        id_sensor = validar_id("\nDigite o ID do sensor: ")
+
+        cursor.execute(
+            """
+            SELECT idsensor, tipo, unidade_medida, status
             FROM sensor
             WHERE idsensor = %s
             FOR UPDATE
@@ -720,24 +695,23 @@ def registrar_medicao():
         sensor = cursor.fetchone()
 
         if not sensor:
-            print("\nSensor não encontrado.")
             conexao.rollback()
+            print("\nSensor não encontrado.")
             return
 
-        # Impede o registro se o sensor estiver inativo
         if not sensor["status"]:
+            conexao.rollback()
             print("\nNão é possível registrar medições!")
             print("Este sensor está INATIVO.")
-            conexao.rollback()
             return
 
         print(f"\nSensor selecionado: {sensor['tipo']}")
-        print(f"Descrição: {sensor['descricao']}")
         print(f"Unidade: {sensor['unidade_medida']}")
 
-        valor = float(input("\nDigite o valor da medição: ").replace(",", "."))
+        valor = validar_valor_medicao(
+            "Digite o valor da medição: "
+        )
 
-        # Obtém o número da última medição daquele sensor
         cursor.execute(
             """
             SELECT COALESCE(MAX(numero_medicao), 0) AS ultima_medicao
@@ -750,7 +724,6 @@ def registrar_medicao():
         resultado = cursor.fetchone()
         numero_medicao = resultado["ultima_medicao"] + 1
 
-        # Registra a medição
         cursor.execute(
             """
             INSERT INTO MEDICAO
@@ -762,16 +735,25 @@ def registrar_medicao():
 
         id_medicao = cursor.lastrowid
 
+        cursor.execute(
+            """
+            SELECT data_hora
+            FROM MEDICAO
+            WHERE idmedicao = %s
+            """,
+            (id_medicao,)
+        )
+
+        medicao = cursor.fetchone()
+
         conexao.commit()
 
         print("\nMedição registrada com sucesso!")
         print(f"Identificação: {id_sensor}-{numero_medicao}")
         print(f"ID interno: {id_medicao}")
+        print(f"Sensor: {sensor['tipo']}")
         print(f"Valor: {valor} {sensor['unidade_medida']}")
-
-    except ValueError:
-        conexao.rollback()
-        print("\nValor inválido. Digite um número.")
+        print(f"Data e hora: {medicao['data_hora']}")
 
     except Exception as erro:
         conexao.rollback()
@@ -781,16 +763,15 @@ def registrar_medicao():
         cursor.close()
         conexao.close()
 
-# =========================================================
+
+# ============================================================
 # HISTÓRICO DE MEDIÇÕES
-# =========================================================
+# ============================================================
 
 def historico_medicoes(id_sensor):
-    if not usuario_exige_login():
-        return
+    conexao = conectar()
 
-    conexao = obter_conexao()
-    if conexao is None:
+    if not conexao:
         return
 
     cursor = conexao.cursor(dictionary=True)
@@ -820,150 +801,266 @@ def historico_medicoes(id_sensor):
         print("\n========== HISTÓRICO DE MEDIÇÕES ==========")
 
         if not medicoes:
-            print("Este sensor ainda não possui medições.")
+            print("\nEste sensor ainda não possui medições.")
             return
 
-        for dados in medicoes:
-            medicao = Medicao(
-                id_sensor=dados["idsensor"],
-                valor=dados["valor"],
-                id_medicao=dados["idmedicao"],
-                numero_medicao=dados["numero_medicao"],
-                data_hora=dados["data_hora"]
+        for medicao in medicoes:
+            identificador = (
+                f"{medicao['idsensor']}-{medicao['numero_medicao']}"
             )
 
-            print("------------------------------------------")
-            print(f"ID da medição: {medicao.identificador()}")
-            print(f"ID interno: {medicao.id_medicao}")
-            print(f"Tipo: {dados['tipo']}")
-            print(f"Data e hora: {medicao.data_hora}")
-            print(f"Valor: {medicao.valor} {dados['unidade_medida']}")
+            print("\n----------------------------------------")
+            print(f"ID da medição: {identificador}")
+            print(f"ID interno: {medicao['idmedicao']}")
+            print(f"Sensor: {medicao['tipo']}")
+            print(
+                f"Valor: {medicao['valor']} "
+                f"{medicao['unidade_medida']}"
+            )
+            print(f"Data e hora: {medicao['data_hora']}")
 
-    except Error as erro:
-        print(f"Erro ao consultar histórico: {erro}")
+    except Exception as erro:
+        print(f"\nErro ao consultar medições: {erro}")
 
     finally:
         cursor.close()
         conexao.close()
 
 
-# =========================================================
+# ============================================================
 # MENU DE MEDIÇÕES
-# =========================================================
+# ============================================================
 
 def menu_medicoes():
-    if not usuario_exige_login():
+    if not Sessao.autenticada():
+        print("\nFaça login para acessar as medições.")
         return
 
     while True:
-        print("\n========== MENU DE MEDIÇÕES ==========")
+        print("\n========== MEDIÇÕES ==========")
         print("1 - Registrar medição")
         print("0 - Voltar")
 
-        opcao = input("Escolha: ").strip()
+        opcao = input("\nEscolha uma opção: ").strip()
 
         if opcao == "1":
             registrar_medicao()
-            pausar()
 
         elif opcao == "0":
             break
 
         else:
-            print("Opção inválida.")
+            print("\nOpção inválida.")
 
 
-# =========================================================
-# MENU DO USUÁRIO
-# =========================================================
+# ============================================================
+# PERFIL DO USUÁRIO
+# ============================================================
 
-def menu_usuario():
-    while Sessao.autenticada():
+def meu_perfil():
+    if not Sessao.autenticada():
+        print("\nFaça login para acessar seu perfil.")
+        return
 
-        print("\n==========================================")
-        print("          SISTEMA ESTUFA IoT02")
-        print("==========================================")
-        print(f"Usuário: {Sessao.usuario_atual()['nome']}")
-        print("------------------------------------------")
-        print("1 - Cadastrar sensores")
-        print("2 - Consultar sensores")
-        print("3 - Medições")
-        print("4 - Meu perfil")
-        print("5 - Encerrar sessão")
-        print("0 - Sair do programa")
+    conexao = conectar()
 
-        opcao = input("Escolha: ").strip()
+    if not conexao:
+        return
 
-        if opcao == "1":
-            cadastrar_sensor()
-            pausar()
+    cursor = conexao.cursor(dictionary=True)
 
-        elif opcao == "2":
-            consultar_sensores()
-            pausar()
+    try:
+        id_usuario = Sessao.obter_id_usuario()
 
-        elif opcao == "3":
-            menu_medicoes()
+        cursor.execute(
+            """
+            SELECT idusuario, nome, email
+            FROM usuario
+            WHERE idusuario = %s
+            """,
+            (id_usuario,)
+        )
 
-        elif opcao == "4":
-            meu_perfil()
-            pausar()
+        usuario = cursor.fetchone()
 
-        elif opcao == "5":
-            Sessao.encerrar()
-            print("Sessão encerrada!")
+        if not usuario:
+            print("\nUsuário não encontrado.")
             return
 
-        elif opcao == "0":
-            Sessao.encerrar()
-            print("Programa encerrado.")
-            raise SystemExit
+        print("\n========== MEU PERFIL ==========")
+        print(f"ID: {usuario['idusuario']}")
+        print(f"Nome: {usuario['nome']}")
+        print(f"E-mail: {usuario['email']}")
+        print("Senha: ********")
 
-        else:
-            print("Opção inválida.")
+        print("\n1 - Alterar senha")
+        print("0 - Voltar")
 
-
-# =========================================================
-# MENU INICIAL
-# =========================================================
-
-def menu_inicial():
-    while True:
-
-        print("\n==========================================")
-        print("          SISTEMA ESTUFA IoT02")
-        print("==========================================")
-        print("1 - Fazer login")
-        print("2 - Cadastrar usuário")
-        print("0 - Sair do programa")
-
-        opcao = input("Escolha: ").strip()
+        opcao = input("\nEscolha: ").strip()
 
         if opcao == "1":
-            login()
+            alterar_senha()
 
-            if Sessao.autenticada():
-                menu_usuario()
+    except Exception as erro:
+        print(f"\nErro ao consultar perfil: {erro}")
 
-        elif opcao == "2":
-            cadastrar_usuario()
+    finally:
+        cursor.close()
+        conexao.close()
 
-        elif opcao == "0":
-            print("Programa encerrado.")
-            break
+
+# ============================================================
+# ALTERAR SENHA
+# ============================================================
+
+def alterar_senha():
+    if not Sessao.autenticada():
+        print("\nFaça login para alterar sua senha.")
+        return
+
+    conexao = conectar()
+
+    if not conexao:
+        return
+
+    cursor = conexao.cursor(dictionary=True)
+
+    try:
+        id_usuario = Sessao.obter_id_usuario()
+
+        cursor.execute(
+            """
+            SELECT senha
+            FROM usuario
+            WHERE idusuario = %s
+            """,
+            (id_usuario,)
+        )
+
+        usuario = cursor.fetchone()
+
+        if not usuario:
+            print("\nUsuário não encontrado.")
+            return
+
+        senha_atual = getpass("Digite sua senha atual: ")
+
+        if not check_password_hash(usuario["senha"], senha_atual):
+            print("\nSenha atual incorreta.")
+            return
+
+        nova_senha = validar_senha("Digite a nova senha: ")
+        confirmar = getpass("Confirme a nova senha: ")
+
+        if nova_senha != confirmar:
+            print("\nAs senhas não correspondem.")
+            return
+
+        senha_hash = generate_password_hash(nova_senha)
+
+        cursor.execute(
+            """
+            UPDATE usuario
+            SET senha = %s
+            WHERE idusuario = %s
+            """,
+            (senha_hash, id_usuario)
+        )
+
+        conexao.commit()
+
+        print("\nSenha alterada com sucesso!")
+
+    except Exception as erro:
+        conexao.rollback()
+        print(f"\nErro ao alterar senha: {erro}")
+
+    finally:
+        cursor.close()
+        conexao.close()
+
+
+# ============================================================
+# ENCERRAR SESSÃO
+# ============================================================
+
+def encerrar_sessao():
+    if Sessao.autenticada():
+        Sessao.encerrar()
+        print("\nSessão encerrada com sucesso.")
+    else:
+        print("\nNenhum usuário está conectado.")
+
+
+# ============================================================
+# MENU PRINCIPAL
+# ============================================================
+
+def menu_principal():
+    while True:
+        print("\n========================================")
+        print("             ESTUFA IoT02")
+        print("========================================")
+
+        if Sessao.autenticada():
+            usuario = Sessao.usuario_atual()
+            print(f"Usuário conectado: {usuario['nome']}")
+
+            print("\n1 - Cadastrar sensores")
+            print("2 - Consultar sensores")
+            print("3 - Medições")
+            print("4 - Meu perfil")
+            print("5 - Encerrar sessão")
+            print("0 - Sair do programa")
+
+            opcao = input("\nEscolha uma opção: ").strip()
+
+            if opcao == "1":
+                cadastrar_sensor()
+
+            elif opcao == "2":
+                consultar_sensores()
+
+            elif opcao == "3":
+                menu_medicoes()
+
+            elif opcao == "4":
+                meu_perfil()
+
+            elif opcao == "5":
+                encerrar_sessao()
+
+            elif opcao == "0":
+                print("\nPrograma encerrado.")
+                break
+
+            else:
+                print("\nOpção inválida.")
 
         else:
-            print("Opção inválida.")
+            print("\n1 - Fazer login")
+            print("2 - Cadastrar usuário")
+            print("0 - Sair do programa")
+
+            opcao = input("\nEscolha uma opção: ").strip()
+
+            if opcao == "1":
+                login()
+
+            elif opcao == "2":
+                cadastrar_usuario()
+
+            elif opcao == "0":
+                print("\nPrograma encerrado.")
+                break
+
+            else:
+                print("\nOpção inválida.")
 
 
-# =========================================================
-# EXECUÇÃO
-# =========================================================
+# ============================================================
+# INICIALIZAÇÃO
+# ============================================================
 
 if __name__ == "__main__":
-    try:
-        menu_inicial()
-
-    except KeyboardInterrupt:
-        Sessao.encerrar()
-        print("\nPrograma interrompido pelo usuário.")
+    menu_principal()

@@ -17,6 +17,51 @@ from medicao import Medicao
 # =========================================================
 # FUNÇÕES AUXILIARES
 # =========================================================
+import re
+import unicodedata
+
+
+def validar_texto(mensagem, minimo_letras=3):
+    while True:
+        texto = input(mensagem).strip()
+
+        # Conta somente letras, incluindo letras acentuadas
+        letras = [
+            caractere for caractere in texto
+            if caractere.isalpha()
+        ]
+
+        if len(letras) < minimo_letras:
+            print(
+                f"Erro: digite pelo menos {minimo_letras} letras."
+            )
+            continue
+
+        if not any(caractere.isalpha() for caractere in texto):
+            print("Erro: o campo precisa conter letras.")
+            continue
+
+        return texto
+
+
+def validar_unidade(mensagem):
+    while True:
+        unidade = input(mensagem).strip()
+
+        if not unidade:
+            print("Erro: informe a unidade de medida.")
+            continue
+
+        if not unidade.isalpha():
+            print(
+                "Erro: a unidade deve conter somente letras, "
+                "sem números, espaços ou caracteres especiais."
+            )
+            continue
+
+        return unidade
+
+
 
 def pausar():
     input("\nPressione ENTER para continuar...")
